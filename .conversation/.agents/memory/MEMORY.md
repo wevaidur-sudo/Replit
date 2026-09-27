@@ -1,0 +1,1 @@
+- [AI provider setup](ai-provider-setup.md) — keep model credentials server-side and use secure provider-key fallback when managed provisioning is unavailable.

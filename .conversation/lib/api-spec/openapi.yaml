@@ -1,0 +1,168 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: API specification
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: gemini
+    description: Server-side Gemini assistant operations
+  - name: sandbox
+    description: Isolated cloud execution operations
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /gemini/assist:
+    post:
+      operationId: generateGeminiAssist
+      tags: [gemini]
+      summary: Generate an assistant response for the active workspace
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GeminiAssistInput"
+      responses:
+        "200":
+          description: Assistant response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GeminiAssistResponse"
+        "400":
+          description: Invalid assistant request
+        "503":
+          description: Gemini is not configured
+  /sandbox/run:
+    post:
+      operationId: runSandbox
+      tags: [sandbox]
+      summary: Queue a workspace command for isolated cloud execution
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SandboxRunInput"
+      responses:
+        "200":
+          description: Cloud execution status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxRunResult"
+        "400":
+          description: Invalid sandbox request
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    WorkspaceMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+          minLength: 1
+      required: [role, content]
+    GeminiAssistInput:
+      type: object
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        activeFile:
+          type: string
+          maxLength: 240
+        activeFileContent:
+          type: string
+          maxLength: 30000
+        workspaceTree:
+          type: string
+          maxLength: 6000
+        terminalOutput:
+          type: string
+          maxLength: 12000
+        messages:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/WorkspaceMessage"
+      required: [prompt]
+    GeminiAssistResponse:
+      type: object
+      properties:
+        content:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        requestId:
+          type: string
+      required: [content, model, provider, requestId]
+    SandboxRunInput:
+      type: object
+      properties:
+        command:
+          type: string
+          minLength: 1
+          maxLength: 240
+        entrypoint:
+          type: string
+          minLength: 1
+          maxLength: 240
+        language:
+          type: string
+          maxLength: 40
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          maxProperties: 40
+      required: [command, entrypoint, files]
+    SandboxRunResult:
+      type: object
+      properties:
+        id:
+          type: string
+        status:
+          type: string
+          enum: [queued, completed, failed]
+        stdout:
+          type: string
+        stderr:
+          type: string
+        durationMs:
+          type: integer
+        provider:
+          type: string
+        note:
+          type: string
+      required: [id, status, stdout, stderr, durationMs, provider, note]
+
