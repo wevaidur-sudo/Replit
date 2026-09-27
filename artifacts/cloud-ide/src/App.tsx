@@ -156,6 +156,7 @@ function App() {
   const [assistantMessages, setAssistantMessages] = useState([
     { role: 'assistant', text: 'Your workspace is ready. Ask me about the active file or the next small move.' },
   ]);
+  const [assistantBusy, setAssistantBusy] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('editor');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -220,31 +221,114 @@ function App() {
     window.setTimeout(() => setSaveState('All changes saved'), 1800);
   }
 
+  type SandboxRunResponse = {
+    status: 'queued' | 'completed' | 'failed';
+    stdout: string;
+    stderr: string;
+    durationMs: number;
+    provider: string;
+    note: string;
+  };
+
+  const runSandboxCommand = async (command: string) => {
+    const response = await fetch('/api/sandbox/run', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        command,
+        entrypoint: activePath,
+        language: activePath.endsWith('.tsx') ? 'typescript' : 'text',
+        files: contents,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error('The cloud sandbox could not accept this run.');
+    }
+
+    return (await response.json()) as SandboxRunResponse;
+  };
+
+  const appendSandboxResult = (result: SandboxRunResponse) => {
+    setTerminalLines((lines) => [
+      ...lines,
+      result.stdout,
+      ...(result.stderr ? [result.stderr] : []),
+      `  ${result.note}`,
+      result.status === 'completed'
+        ? `  ✓ completed in ${result.durationMs}ms via ${result.provider}`
+        : `  • ${result.status} via ${result.provider}`,
+      'orbit@workspace ~/project $',
+    ]);
+  };
+
   const runProject = () => {
     if (isRunning) return;
     setIsRunning(true);
     setTerminalOpen(true);
-    setTerminalLines((lines) => [...lines, '', 'orbit@workspace ~/project $ pnpm build', '  transforming modules…']);
-    window.setTimeout(() => {
-      setTerminalLines((lines) => [...lines, '  ✓ 42 modules transformed', '  ✓ built in 1.08s', 'orbit@workspace ~/project $']);
+    setTerminalLines((lines) => [...lines, '', 'orbit@workspace ~/project $ pnpm build', '  dispatching to cloud sandbox…']);
+    void runSandboxCommand('pnpm build')
+      .then(appendSandboxResult)
+      .catch((error: Error) => {
+        setTerminalLines((lines) => [...lines, `  ✕ ${error.message}`, 'orbit@workspace ~/project $']);
+      })
+      .finally(() => {
       setIsRunning(false);
-    }, 850);
+      });
   };
 
   const runCommand = (event: FormEvent) => {
     event.preventDefault();
     const command = terminalCommand.trim();
     if (!command) return;
-    setTerminalLines((lines) => [...lines, `orbit@workspace ~/project $ ${command}`, command === 'clear' ? '' : `  ran locally · ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`]);
+    if (command === 'clear') {
+      setTerminalLines([]);
+      setTerminalCommand('');
+      return;
+    }
+    setTerminalLines((lines) => [...lines, `orbit@workspace ~/project $ ${command}`, '  dispatching to cloud sandbox…']);
     setTerminalCommand('');
+    void runSandboxCommand(command)
+      .then(appendSandboxResult)
+      .catch((error: Error) => {
+        setTerminalLines((lines) => [...lines, `  ✕ ${error.message}`, 'orbit@workspace ~/project $']);
+      });
   };
 
   const askAssistant = (event: FormEvent) => {
     event.preventDefault();
     const prompt = assistantPrompt.trim();
-    if (!prompt) return;
-    setAssistantMessages((messages) => [...messages, { role: 'user', text: prompt }, { role: 'assistant', text: prompt.toLowerCase().includes('test') ? 'Start with the smallest behavior: render the component, click the primary action, and assert the visible result. I would put it beside the component in a focused spec.' : `In ${activeFile?.label ?? 'this file'}, I would keep the next change narrow: name the intent, make the state explicit, then run the loop. That keeps the surface easy to review.` }]);
+    if (!prompt || assistantBusy) return;
+    const previousMessages = assistantMessages;
+    setAssistantMessages((messages) => [...messages, { role: 'user', text: prompt }]);
     setAssistantPrompt('');
+    setAssistantBusy(true);
+    void fetch('/api/gemini/assist', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        prompt,
+        activeFile: activePath,
+        activeFileContent: contents[activePath],
+        workspaceTree: fileRows.map((file) => file.path).join('\n'),
+        terminalOutput: terminalLines.slice(-20).join('\n'),
+        messages: previousMessages.slice(-12).map((message) => ({
+          role: message.role,
+          content: message.text,
+        })),
+      }),
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Gemini could not answer this request.');
+        return (await response.json()) as { content: string };
+      })
+      .then((result) => {
+        setAssistantMessages((messages) => [...messages, { role: 'assistant', text: result.content }]);
+      })
+      .catch((error: Error) => {
+        setAssistantMessages((messages) => [...messages, { role: 'assistant', text: error.message }]);
+      })
+      .finally(() => setAssistantBusy(false));
   };
 
   const renderSidebar = (mobile = false) => (
@@ -366,8 +450,8 @@ function App() {
     <aside className={`${mobile ? 'w-full' : 'hidden xl:flex w-[315px]'} min-h-0 shrink-0 flex-col border-l border-border bg-card/55`}>
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
         <div className="grid size-6 place-items-center rounded-md bg-accent/20 text-accent"><Bot className="size-3.5" /></div>
-        <div><div className="text-[11px] font-bold">Orbit assistant</div><div className="font-code text-[9px] text-muted-foreground">local context · ready</div></div>
-        <button onClick={() => setAssistantMessages((messages) => [...messages, { role: 'assistant', text: 'Context is limited to this local workspace. No files leave this tab.' }])} className="ml-auto rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground" data-testid="button-assistant-options" aria-label="Assistant options"><CircleDot className="size-3.5" /></button>
+         <div><div className="text-[11px] font-bold">Orbit assistant</div><div className="font-code text-[9px] text-muted-foreground">{assistantBusy ? 'Gemini · thinking…' : 'Gemini · secure server route'}</div></div>
+         <button onClick={() => setAssistantMessages((messages) => [...messages, { role: 'assistant', text: 'Only the context you submit is forwarded to Gemini through the server route. Your API key never reaches this browser.' }])} className="ml-auto rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground" data-testid="button-assistant-options" aria-label="Assistant options"><CircleDot className="size-3.5" /></button>
       </div>
       <div className="scrollbar-thin min-h-0 flex-1 space-y-3 overflow-auto p-3">
         <div className="rounded-md border border-accent/20 bg-accent/10 p-3 text-[11px] leading-relaxed text-foreground"><div className="mb-1 flex items-center gap-1.5 font-code text-[9px] uppercase tracking-wider text-accent"><Sparkles className="size-3" /> Context note</div>Ask for a review, a test idea, or a second pair of eyes on the current file.</div>
@@ -375,7 +459,7 @@ function App() {
       </div>
       <form onSubmit={askAssistant} className="m-3 rounded-md border border-border bg-background p-2 shadow-sm">
         <textarea value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} className="min-h-[52px] w-full resize-none bg-transparent px-1 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground" placeholder="Ask about this workspace…" data-testid="textarea-assistant-prompt" aria-label="Assistant prompt" />
-        <div className="mt-1 flex items-center justify-between border-t border-border pt-2"><span className="font-code text-[9px] text-muted-foreground">⌘ ↵ to send</span><button className="grid size-6 place-items-center rounded bg-primary text-primary-foreground transition hover:brightness-110 disabled:opacity-40" disabled={!assistantPrompt.trim()} data-testid="button-send-assistant" aria-label="Send assistant prompt"><Send className="size-3" /></button></div>
+         <div className="mt-1 flex items-center justify-between border-t border-border pt-2"><span className="font-code text-[9px] text-muted-foreground">⌘ ↵ to send</span><button className="grid size-6 place-items-center rounded bg-primary text-primary-foreground transition hover:brightness-110 disabled:opacity-40" disabled={!assistantPrompt.trim() || assistantBusy} data-testid="button-send-assistant" aria-label="Send assistant prompt"><Send className="size-3" /></button></div>
       </form>
     </aside>
   );
