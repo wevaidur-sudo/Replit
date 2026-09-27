@@ -319,8 +319,11 @@ function App() {
       }),
     })
       .then(async (response) => {
-        if (!response.ok) throw new Error('Gemini could not answer this request.');
-        return (await response.json()) as { content: string };
+        const payload = (await response.json().catch(() => ({}))) as { content?: string; error?: string };
+        if (!response.ok) {
+          throw new Error(payload.error ?? 'Gemini could not answer this request.');
+        }
+        return payload as { content: string };
       })
       .then((result) => {
         setAssistantMessages((messages) => [...messages, { role: 'assistant', text: result.content }]);
