@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Cloud IDE Workspace"
+description = "A responsive browser-based coding workspace with a project tree, editable code surface, simulated terminal, collaboration presence, and AI assistant panel."
+version = "1.0.0"
+id = "artifacts/cloud-ide"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21471
+
+[services.development]
+run = "pnpm --filter @workspace/cloud-ide run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/cloud-ide", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/cloud-ide/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21471"
+BASE_PATH = "/"
