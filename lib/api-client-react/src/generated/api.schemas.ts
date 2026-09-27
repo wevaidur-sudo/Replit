@@ -48,6 +48,30 @@ export interface GeminiAssistResponse {
   requestId: string;
 }
 
+export type WorkspaceBuildInputCurrentFiles = {[key: string]: string};
+
+export interface WorkspaceBuildInput {
+  /**
+     * @minLength 1
+     * @maxLength 4000
+     */
+  prompt: string;
+  currentFiles?: WorkspaceBuildInputCurrentFiles;
+  /** @maxLength 6000 */
+  workspaceTree?: string;
+}
+
+export type WorkspaceBuildResponseFiles = {[key: string]: string};
+
+export interface WorkspaceBuildResponse {
+  summary: string;
+  files: WorkspaceBuildResponseFiles;
+  previewHtml: string;
+  model: string;
+  provider: string;
+  requestId: string;
+}
+
 export type SandboxRunInputFiles = {[key: string]: string};
 
 export interface SandboxRunInput {

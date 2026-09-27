@@ -35,6 +35,7 @@ import {
   Trash2,
   X,
   Zap,
+  ExternalLink,
 } from 'lucide-react';
 import { Route, Switch, Router as WouterRouter } from 'wouter';
 
@@ -45,14 +46,18 @@ type MobilePanel = 'files' | 'editor' | 'terminal' | 'assistant';
 
 const initialContents: Record<FilePath, string> = {
   '/src/App.tsx': `import { useState } from 'react';
-import { Dashboard } from './components/Dashboard';
 
 export default function App() {
-  const [ready, setReady] = useState(false);
+  const [count, setCount] = useState(0);
 
   return (
     <main className="app-shell">
-      <Dashboard ready={ready} onReady={() => setReady(true)} />
+      <p className="eyebrow">Orbit starter</p>
+      <h1>A working canvas for your next idea.</h1>
+      <p>Ask Orbit what you want to create and it will write the files for you.</p>
+      <button onClick={() => setCount((value) => value + 1)}>
+        Clicked {count} times
+      </button>
     </main>
   );
 }`,
@@ -154,14 +159,18 @@ function App() {
   const [isRunning, setIsRunning] = useState(false);
   const [assistantPrompt, setAssistantPrompt] = useState('');
   const [assistantMessages, setAssistantMessages] = useState([
-    { role: 'assistant', text: 'Your workspace is ready. Ask me about the active file or the next small move.' },
+    { role: 'assistant', text: 'What do you want to create? Describe the app, page, or feature and I’ll write the files and open a live preview.' },
   ]);
   const [assistantBusy, setAssistantBusy] = useState(false);
+  const [previewHtml, setPreviewHtml] = useState('');
+  const [previewStatus, setPreviewStatus] = useState('No preview yet');
   const [theme, setTheme] = useState<'light' | 'dark'>('light');
   const [mobilePanel, setMobilePanel] = useState<MobilePanel>('editor');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [srcOpen, setSrcOpen] = useState(true);
   const commandInputRef = useRef<HTMLInputElement>(null);
+  const previewWindowRef = useRef<Window | null>(null);
+  const previewUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     const storedTheme = window.localStorage.getItem('orbit-theme');
@@ -172,6 +181,10 @@ function App() {
     document.documentElement.classList.toggle('dark', theme === 'dark');
     window.localStorage.setItem('orbit-theme', theme);
   }, [theme]);
+
+  useEffect(() => () => {
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+  }, []);
 
   useEffect(() => {
     const keyHandler = (event: KeyboardEvent) => {
@@ -295,40 +308,94 @@ function App() {
       });
   };
 
+  const openPreview = (html = previewHtml) => {
+    if (!html) return;
+
+    if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    const previewUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+    const existingWindow = previewWindowRef.current;
+    const previewWindow = existingWindow && !existingWindow.closed
+      ? existingWindow
+      : window.open('', '_blank');
+
+    if (!previewWindow) {
+      URL.revokeObjectURL(previewUrl);
+      setPreviewStatus('Allow pop-ups to open the preview tab');
+      return;
+    }
+
+    previewWindow.opener = null;
+    previewWindowRef.current = previewWindow;
+    previewUrlRef.current = previewUrl;
+    previewWindow.location.href = previewUrl;
+    setPreviewStatus('Preview open in a new tab');
+  };
+
   const askAssistant = (event: FormEvent) => {
     event.preventDefault();
     const prompt = assistantPrompt.trim();
     if (!prompt || assistantBusy) return;
-    const previousMessages = assistantMessages;
+    const previewWindow = window.open('', '_blank');
+    if (previewWindow) {
+      previewWindow.document.write('<title>Orbit is building your preview…</title><body style="font-family:system-ui;padding:40px;color:#334155">Orbit is building your preview…</body>');
+      previewWindow.document.close();
+      previewWindowRef.current = previewWindow;
+    }
     setAssistantMessages((messages) => [...messages, { role: 'user', text: prompt }]);
     setAssistantPrompt('');
     setAssistantBusy(true);
-    void fetch('/api/gemini/assist', {
+    setPreviewStatus('Gemini is writing your files…');
+    void fetch('/api/gemini/build', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         prompt,
-        activeFile: activePath,
-        activeFileContent: contents[activePath],
+        currentFiles: contents,
         workspaceTree: fileRows.map((file) => file.path).join('\n'),
-        terminalOutput: terminalLines.slice(-20).join('\n'),
-        messages: previousMessages.slice(-12).map((message) => ({
-          role: message.role,
-          content: message.text,
-        })),
       }),
     })
       .then(async (response) => {
-        const payload = (await response.json().catch(() => ({}))) as { content?: string; error?: string };
+        const payload = (await response.json().catch(() => ({}))) as {
+          error?: string;
+          summary?: string;
+          files?: Record<string, string>;
+          previewHtml?: string;
+        };
         if (!response.ok) {
           throw new Error(payload.error ?? 'Gemini could not answer this request.');
         }
-        return payload as { content: string };
+        return payload as {
+          summary: string;
+          files: Record<string, string>;
+          previewHtml: string;
+        };
       })
       .then((result) => {
-        setAssistantMessages((messages) => [...messages, { role: 'assistant', text: result.content }]);
+        const generatedFiles = Object.entries(result.files).filter(([path]) => path in contents);
+        const generatedPaths = generatedFiles.map(([path]) => path as FilePath);
+        setContents((current) => ({
+          ...current,
+          ...Object.fromEntries(generatedFiles),
+        }));
+        setDirty((current) => ({
+          ...current,
+          ...Object.fromEntries(generatedPaths.map((path) => [path, false])),
+        }));
+        setOpenTabs((tabs) => Array.from(new Set([...tabs, ...generatedPaths])));
+        if (generatedPaths.includes('/src/App.tsx')) setActivePath('/src/App.tsx');
+        setSaveState('Generated and saved');
+        setPreviewHtml(result.previewHtml);
+        setAssistantMessages((messages) => [
+          ...messages,
+          {
+            role: 'assistant',
+            text: `${result.summary}\n\nI wrote ${generatedFiles.map(([path]) => path).join(', ')} and opened the live preview in a new tab.`,
+          },
+        ]);
+        openPreview(result.previewHtml);
       })
       .catch((error: Error) => {
+        setPreviewStatus('Build failed');
         setAssistantMessages((messages) => [...messages, { role: 'assistant', text: error.message }]);
       })
       .finally(() => setAssistantBusy(false));
@@ -453,16 +520,17 @@ function App() {
     <aside className={`${mobile ? 'w-full' : 'hidden xl:flex w-[315px]'} min-h-0 shrink-0 flex-col border-l border-border bg-card/55`}>
       <div className="flex h-11 shrink-0 items-center gap-2 border-b border-border px-4">
         <div className="grid size-6 place-items-center rounded-md bg-accent/20 text-accent"><Bot className="size-3.5" /></div>
-         <div><div className="text-[11px] font-bold">Orbit assistant</div><div className="font-code text-[9px] text-muted-foreground">{assistantBusy ? 'Gemini · thinking…' : 'Gemini · secure server route'}</div></div>
+         <div><div className="text-[11px] font-bold">Orbit assistant</div><div className="font-code text-[9px] text-muted-foreground">{assistantBusy ? 'Gemini · writing files…' : previewStatus}</div></div>
          <button onClick={() => setAssistantMessages((messages) => [...messages, { role: 'assistant', text: 'Only the context you submit is forwarded to Gemini through the server route. Your API key never reaches this browser.' }])} className="ml-auto rounded p-1 text-muted-foreground transition hover:bg-muted hover:text-foreground" data-testid="button-assistant-options" aria-label="Assistant options"><CircleDot className="size-3.5" /></button>
       </div>
       <div className="scrollbar-thin min-h-0 flex-1 space-y-3 overflow-auto p-3">
         <div className="rounded-md border border-accent/20 bg-accent/10 p-3 text-[11px] leading-relaxed text-foreground"><div className="mb-1 flex items-center gap-1.5 font-code text-[9px] uppercase tracking-wider text-accent"><Sparkles className="size-3" /> Context note</div>Ask for a review, a test idea, or a second pair of eyes on the current file.</div>
-        {assistantMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`rounded-md p-2.5 text-[11px] leading-relaxed ${message.role === 'user' ? 'ml-5 border border-border bg-muted text-foreground' : 'mr-2 border border-border/70 bg-card text-muted-foreground'}`} data-testid={`text-assistant-message-${index}`}>{message.text}</div>)}
+         {assistantMessages.map((message, index) => <div key={`${message.role}-${index}`} className={`whitespace-pre-wrap rounded-md p-2.5 text-[11px] leading-relaxed ${message.role === 'user' ? 'ml-5 border border-border bg-muted text-foreground' : 'mr-2 border border-border/70 bg-card text-muted-foreground'}`} data-testid={`text-assistant-message-${index}`}>{message.text}</div>)}
       </div>
       <form onSubmit={askAssistant} className="m-3 rounded-md border border-border bg-background p-2 shadow-sm">
-        <textarea value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} className="min-h-[52px] w-full resize-none bg-transparent px-1 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground" placeholder="Ask about this workspace…" data-testid="textarea-assistant-prompt" aria-label="Assistant prompt" />
-         <div className="mt-1 flex items-center justify-between border-t border-border pt-2"><span className="font-code text-[9px] text-muted-foreground">⌘ ↵ to send</span><button className="grid size-6 place-items-center rounded bg-primary text-primary-foreground transition hover:brightness-110 disabled:opacity-40" disabled={!assistantPrompt.trim() || assistantBusy} data-testid="button-send-assistant" aria-label="Send assistant prompt"><Send className="size-3" /></button></div>
+         <textarea value={assistantPrompt} onChange={(event) => setAssistantPrompt(event.target.value)} className="min-h-[52px] w-full resize-none bg-transparent px-1 text-[11px] leading-relaxed outline-none placeholder:text-muted-foreground" placeholder="Describe what you want to create…" data-testid="textarea-assistant-prompt" aria-label="Describe what you want to create" />
+          <div className="mt-1 flex items-center justify-between border-t border-border pt-2"><span className="font-code text-[9px] text-muted-foreground">⌘ ↵ to build</span><button className="grid size-6 place-items-center rounded bg-primary text-primary-foreground transition hover:brightness-110 disabled:opacity-40" disabled={!assistantPrompt.trim() || assistantBusy} data-testid="button-send-assistant" aria-label="Build from prompt"><Send className="size-3" /></button></div>
+         {previewHtml && <button type="button" onClick={() => openPreview()} className="mt-2 flex w-full items-center justify-center gap-1.5 rounded border border-primary/30 bg-primary/10 py-1.5 font-code text-[10px] text-primary transition hover:bg-primary/15"><ExternalLink className="size-3" /> Open preview tab</button>}
       </form>
     </aside>
   );
@@ -479,6 +547,7 @@ function App() {
         <div className="flex items-center gap-1.5">
           <div className="hidden items-center gap-2 rounded border border-border bg-muted/60 px-2.5 py-1.5 text-[10px] text-muted-foreground lg:flex"><Search className="size-3" /><span>Quick open</span><span className="font-code text-[9px]">⌘K</span></div>
           <button onClick={runProject} className="flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-[10px] font-bold text-primary-foreground transition hover:brightness-110 disabled:opacity-60" disabled={isRunning} data-testid="button-run-project"><Play className="size-3 fill-current" /> {isRunning ? 'Building' : 'Run'}<span className="hidden font-code text-[9px] opacity-70 sm:inline">⌘↵</span></button>
+           <button onClick={() => openPreview()} className="hidden items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-[10px] font-semibold text-muted-foreground transition hover:bg-muted hover:text-foreground disabled:opacity-40 lg:flex" disabled={!previewHtml} data-testid="button-open-preview"><ExternalLink className="size-3" /> Preview</button>
           <button onClick={() => setTheme((current) => current === 'light' ? 'dark' : 'light')} className="rounded-md border border-border p-1.5 text-muted-foreground transition hover:bg-muted hover:text-foreground" data-testid="button-toggle-theme" aria-label="Toggle theme">{theme === 'light' ? <Moon className="size-3.5" /> : <Sun className="size-3.5" />}</button>
           <div className="ml-1 grid size-7 place-items-center rounded-full bg-[#d8b4fe] text-[10px] font-extrabold text-[#3b2362]" data-testid="avatar-user">AS</div>
         </div>

@@ -24,7 +24,9 @@ import type {
   GeminiAssistResponse,
   HealthStatus,
   SandboxRunInput,
-  SandboxRunResult
+  SandboxRunResult,
+  WorkspaceBuildInput,
+  WorkspaceBuildResponse
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -218,6 +220,94 @@ export const useGenerateGeminiAssist = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getGenerateGeminiAssistMutationOptions(options));
+    }
+
+export const getBuildWorkspaceUrl = () => {
+
+
+
+
+  return `/api/gemini/build`
+}
+
+/**
+ * @summary Generate workspace files and a live preview from a build prompt
+ */
+export const buildWorkspace = async (workspaceBuildInput: WorkspaceBuildInput, options?: Parameters<typeof customFetch>[1]): Promise<WorkspaceBuildResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<WorkspaceBuildResponse>(getBuildWorkspaceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(workspaceBuildInput)
+  }
+);}
+
+
+
+
+
+export const getBuildWorkspaceMutationKey = () => ['buildWorkspace'] as const;
+
+export const getBuildWorkspaceMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof buildWorkspace>>, TError,BuildWorkspaceMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof buildWorkspace>>, TError,BuildWorkspaceMutationVariables, TContext> => {
+
+const mutationKey = getBuildWorkspaceMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof buildWorkspace>>, BuildWorkspaceMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  buildWorkspace(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type BuildWorkspaceMutationResult = NonNullable<Awaited<ReturnType<typeof buildWorkspace>>>
+    export type BuildWorkspaceMutationBody = BodyType<WorkspaceBuildInput>
+    export type BuildWorkspaceMutationError = ErrorType<void>
+    export type BuildWorkspaceMutationVariables = {data: BodyType<WorkspaceBuildInput>}
+
+    /**
+ * @summary Generate workspace files and a live preview from a build prompt
+ */
+export const useBuildWorkspace = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof buildWorkspace>>, TError,BuildWorkspaceMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof buildWorkspace>>,
+        TError,
+        BuildWorkspaceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getBuildWorkspaceMutationOptions(options));
     }
 
 export const getRunSandboxUrl = () => {

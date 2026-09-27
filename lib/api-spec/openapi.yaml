@@ -50,6 +50,30 @@ paths:
           description: Invalid assistant request
         "503":
           description: Gemini is not configured
+  /gemini/build:
+    post:
+      operationId: buildWorkspace
+      tags: [gemini]
+      summary: Generate workspace files and a live preview from a build prompt
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WorkspaceBuildInput"
+      responses:
+        "200":
+          description: Generated workspace files and preview document
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspaceBuildResponse"
+        "400":
+          description: Invalid build request
+        "502":
+          description: Gemini returned an invalid build response
+        "503":
+          description: Gemini is not configured
   /sandbox/run:
     post:
       operationId: runSandbox
@@ -126,6 +150,41 @@ components:
         requestId:
           type: string
       required: [content, model, provider, requestId]
+    WorkspaceBuildInput:
+      type: object
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+        currentFiles:
+          type: object
+          additionalProperties:
+            type: string
+          maxProperties: 20
+        workspaceTree:
+          type: string
+          maxLength: 6000
+      required: [prompt]
+    WorkspaceBuildResponse:
+      type: object
+      properties:
+        summary:
+          type: string
+        files:
+          type: object
+          additionalProperties:
+            type: string
+          maxProperties: 20
+        previewHtml:
+          type: string
+        model:
+          type: string
+        provider:
+          type: string
+        requestId:
+          type: string
+      required: [summary, files, previewHtml, model, provider, requestId]
     SandboxRunInput:
       type: object
       properties:

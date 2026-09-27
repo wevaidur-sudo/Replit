@@ -56,6 +56,31 @@ export const GenerateGeminiAssistResponse = zod.object({
 
 
 /**
+ * @summary Generate workspace files and a live preview from a build prompt
+ */
+export const buildWorkspaceBodyPromptMax = 4000;
+
+export const buildWorkspaceBodyWorkspaceTreeMax = 6000;
+
+
+
+export const BuildWorkspaceBody = zod.object({
+  "prompt": zod.string().min(1).max(buildWorkspaceBodyPromptMax),
+  "currentFiles": zod.record(zod.string(), zod.string()).optional(),
+  "workspaceTree": zod.string().max(buildWorkspaceBodyWorkspaceTreeMax).optional()
+})
+
+export const BuildWorkspaceResponse = zod.object({
+  "summary": zod.string(),
+  "files": zod.record(zod.string(), zod.string()),
+  "previewHtml": zod.string(),
+  "model": zod.string(),
+  "provider": zod.string(),
+  "requestId": zod.string()
+})
+
+
+/**
  * @summary Queue a workspace command for isolated cloud execution
  */
 export const runSandboxBodyCommandMax = 240;
